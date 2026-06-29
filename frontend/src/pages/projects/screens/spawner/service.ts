@@ -1,6 +1,7 @@
 import * as _ from 'lodash-es';
 import { K8sStatus } from '@openshift/dynamic-plugin-sdk-utils';
 import type {
+  EnvironmentVariable,
   Volume,
   VolumeMount,
   PersistentVolumeClaimKind,
@@ -14,6 +15,7 @@ import {
   createSecret,
   deleteConfigMap,
   deleteSecret,
+  getSecret,
   replaceConfigMap,
   replaceSecret,
   updatePvc,
@@ -31,7 +33,12 @@ import { Connection } from '#~/concepts/connectionTypes/types';
 import { ConfigMapKind, NotebookKind } from '#~/k8sTypes';
 import { isPvcUpdateRequired } from '#~/pages/projects/screens/detail/storage/utils';
 import { fetchNotebookEnvVariables } from './environmentVariables/useNotebookEnvVariables';
-import { getDeletedConfigMapOrSecretVariables } from './environmentVariables/utils';
+import {
+  getDeletedConfigMapOrSecretVariables,
+  isExistingSecretRef,
+  parseExistingSecretRefsFromEnvVar,
+  convertExistingSecretRefsToEnv,
+} from './environmentVariables/utils';
 
 export const createPvcDataForNotebook = async (
   projectName: string,
@@ -171,24 +178,33 @@ export const updateConfigMapsAndSecretsForNotebook = async (
   connections?: Connection[],
   dryRun = false,
 ): Promise<EnvironmentFromVariable[]> => {
+  // Filter out existing secret ref variables — they don't create/update K8s resources
+  const regularEnvVariables = envVariables.filter((v) => !isExistingSecretRef(v));
+
   const existingEnvVars = await fetchNotebookEnvVariables(notebook);
+  // Also filter out existing secret ref entries from fetched env vars
+  const regularExistingEnvVars = existingEnvVars.filter((v) => !isExistingSecretRef(v));
+
   const { deletedConfigMaps, deletedSecrets } = getDeletedConfigMapOrSecretVariables(
     notebook,
-    existingEnvVars,
+    regularExistingEnvVars,
     [...(connections || []).map((connection) => connection.metadata.name)],
   );
 
-  const [oldResources, newResources] = _.partition(envVariables, (envVar) => envVar.existingName);
+  const [oldResources, newResources] = _.partition(
+    regularEnvVariables,
+    (envVar) => envVar.existingName,
+  );
   const currentNames = oldResources
     .map((envVar) => envVar.existingName)
     .filter((v): v is string => !!v);
 
-  const removeResources = existingEnvVars.filter(
+  const removeResources = regularExistingEnvVars.filter(
     (envVar) => envVar.existingName && !currentNames.includes(envVar.existingName),
   );
 
   const [typeChangeResources, updateResources] = _.partition(oldResources, (envVar) =>
-    existingEnvVars.find(
+    regularExistingEnvVars.find(
       (existingEnvVar) =>
         existingEnvVar.existingName === envVar.existingName &&
         existingEnvVar.values?.category !== envVar.values?.category,
@@ -242,4 +258,40 @@ export const updateConfigMapsAndSecretsForNotebook = async (
       !(envFrom.secretRef?.name && deletingNames.includes(envFrom.secretRef.name)) &&
       !(envFrom.configMapRef?.name && deletingNames.includes(envFrom.configMapRef.name)),
   );
+};
+
+/**
+ * Resolve existing secret refs from env variables into EnvironmentVariable[] entries
+ * with `valueFrom.secretKeyRef`. For "allKeys" refs, fetches the secret to discover keys.
+ * These are injected into the container's `env` array (not `envFrom`).
+ */
+export const resolveExistingSecretRefEnvVars = async (
+  projectName: string,
+  envVariables: EnvVariable[],
+): Promise<EnvironmentVariable[]> => {
+  const existingRefs = envVariables
+    .filter(isExistingSecretRef)
+    .flatMap(parseExistingSecretRefsFromEnvVar);
+
+  if (existingRefs.length === 0) {
+    return [];
+  }
+
+  // For "allKeys" refs, resolve the actual keys from the secret
+  const allKeysRefs = existingRefs.filter((ref) => ref.allKeys);
+  const resolvedKeys = new Map<string, string[]>();
+
+  if (allKeysRefs.length > 0) {
+    const uniqueNames = [...new Set(allKeysRefs.map((ref) => ref.secretName))];
+    const secrets = await Promise.all(
+      uniqueNames.map((name) => getSecret(projectName, name).catch(() => null)),
+    );
+    secrets.forEach((secret, i) => {
+      if (secret) {
+        resolvedKeys.set(uniqueNames[i], Object.keys(secret.data || {}));
+      }
+    });
+  }
+
+  return convertExistingSecretRefsToEnv(existingRefs, resolvedKeys);
 };

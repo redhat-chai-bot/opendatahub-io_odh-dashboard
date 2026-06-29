@@ -11,11 +11,15 @@ import {
 } from '#~/pages/projects/types';
 import useFetchState, { NotReadyError } from '#~/utilities/useFetchState';
 import { isConnection } from '#~/concepts/connectionTypes/utils';
-import { getDeletedConfigMapOrSecretVariables, isSecretKind } from './utils';
+import {
+  extractExistingSecretRefsFromEnv,
+  getDeletedConfigMapOrSecretVariables,
+  isSecretKind,
+} from './utils';
 
 export const fetchNotebookEnvVariables = (notebook: NotebookKind): Promise<EnvVariable[]> => {
   const envFromList = notebook.spec.template.spec.containers[0].envFrom || [];
-  return Promise.all(
+  const envFromPromise = Promise.all(
     envFromList
       .map((envFrom) => {
         if (envFrom.configMapRef) {
@@ -72,6 +76,34 @@ export const fetchNotebookEnvVariables = (notebook: NotebookKind): Promise<EnvVa
       return [...acc, envVar];
     }, []),
   );
+
+  // Also extract secretKeyRef entries from the env array
+  const containerEnv = notebook.spec.template.spec.containers[0].env;
+  // Filter out built-in env vars (NOTEBOOK_ARGS, JUPYTER_IMAGE)
+  const builtInEnvNames = new Set(['NOTEBOOK_ARGS', 'JUPYTER_IMAGE']);
+  const userEnvVars = containerEnv.filter((e) => !builtInEnvNames.has(e.name));
+  const existingSecretRefs = extractExistingSecretRefsFromEnv(userEnvVars);
+
+  return envFromPromise.then((envVars) => {
+    if (existingSecretRefs.length > 0) {
+      // Add a single EnvVariable entry representing all existing secret refs
+      const existingRefEnvVar: EnvVariable = {
+        type: EnvironmentVariableType.SECRET,
+        existingName: `__secretKeyRefs__`,
+        values: {
+          category: SecretCategory.EXISTING,
+          data: [
+            {
+              key: '__existingSecretRefs',
+              value: JSON.stringify(existingSecretRefs),
+            },
+          ],
+        },
+      };
+      return [...envVars, existingRefEnvVar];
+    }
+    return envVars;
+  });
 };
 
 export const useNotebookEnvVariables = (

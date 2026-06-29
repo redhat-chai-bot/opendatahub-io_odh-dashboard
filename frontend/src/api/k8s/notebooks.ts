@@ -37,6 +37,7 @@ export const assembleNotebook = (
     projectName,
     notebookData,
     envFrom,
+    existingSecretRefEnvVars,
     image,
     volumes: formVolumes,
     volumeMounts: formVolumeMounts,
@@ -134,6 +135,7 @@ export const assembleNotebook = (
                   name: 'JUPYTER_IMAGE',
                   value: imageUrl,
                 },
+                ...(existingSecretRefEnvVars || []),
               ],
               envFrom,
               volumeMounts,
@@ -302,6 +304,8 @@ export const updateNotebook = (
 
   // clean the envFrom array in case of merging the old value again
   container.envFrom = [];
+  // clean the env array to prevent merge from preserving stale secretKeyRef entries
+  container.env = [];
   // clean the resources, affinity and tolerations for accelerator
   oldNotebook.spec.template.spec.tolerations = [];
   oldNotebook.spec.template.spec.affinity = {};

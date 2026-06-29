@@ -1,5 +1,6 @@
 import type {
   EnvironmentFromVariable,
+  EnvironmentVariable,
   K8sNameDescriptionFieldData,
   Volume,
   VolumeMount,
@@ -92,6 +93,7 @@ export type StartNotebookData = {
   volumes?: Volume[];
   volumeMounts?: VolumeMount[];
   envFrom?: EnvironmentFromVariable[];
+  existingSecretRefEnvVars?: EnvironmentVariable[];
   dashboardNamespace?: string;
   connections?: Connection[];
   hardwareProfileOptions: UseAssignHardwareProfileResult<NotebookKind>;
@@ -125,7 +127,14 @@ export enum SecretCategory {
   GENERIC = 'secret key-value',
   AWS = 'aws',
   UPLOAD = 'secret upload',
+  EXISTING = 'secret existing',
 }
+
+export type ExistingSecretKeyRef = {
+  secretName: string;
+  allKeys: boolean;
+  selectedKeys: string[];
+};
 export enum ConfigMapCategory {
   GENERIC = 'configmap key-value',
   UPLOAD = 'configmap upload',

@@ -339,6 +339,26 @@ export const isEnvVariableDataValid = (envVariables: EnvVariable[]): boolean => 
         return values.every(({ key, value }) => isValidGenericKey(key) && !!value);
       case SecretCategory.AWS:
         return isAWSValid(values);
+      case SecretCategory.EXISTING:
+        // Valid if the serialized refs contain at least one secret reference
+        try {
+          const entry = values.find((v) => v.key === '__existingSecretRefs');
+          if (entry) {
+            const refs = JSON.parse(entry.value);
+            return (
+              Array.isArray(refs) &&
+              refs.length > 0 &&
+              refs.every(
+                (ref: { secretName?: string; allKeys?: boolean; selectedKeys?: string[] }) =>
+                  ref.secretName &&
+                  (ref.allKeys || (ref.selectedKeys && ref.selectedKeys.length > 0)),
+              )
+            );
+          }
+        } catch {
+          // ignore parse errors
+        }
+        return false;
       default:
         return false;
     }

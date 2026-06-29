@@ -32,6 +32,7 @@ import { getNotebookPVCNames } from '#~/pages/projects/pvc/utils';
 import {
   createConfigMapsAndSecretsForNotebook,
   createPvcDataForNotebook,
+  resolveExistingSecretRefEnvVars,
   updateConfigMapsAndSecretsForNotebook,
   updatePvcDataForNotebook,
 } from './service';
@@ -172,16 +173,19 @@ const SpawnerFooter: React.FC<SpawnerFooterProps> = ({
 
     await Promise.all(restartConnectedNotebooksPromises);
 
-    const envFrom = await updateConfigMapsAndSecretsForNotebook(
-      projectName,
-      editNotebook,
-      envVariables,
-      connections,
-      dryRun,
-    );
+    const [envFrom, existingSecretRefEnvVars] = await Promise.all([
+      updateConfigMapsAndSecretsForNotebook(
+        projectName,
+        editNotebook,
+        envVariables,
+        connections,
+        dryRun,
+      ),
+      resolveExistingSecretRefEnvVars(projectName, envVariables),
+    ]);
 
     const annotations = { ...editNotebook.metadata.annotations };
-    if (envFrom.length > 0) {
+    if (envFrom.length > 0 || existingSecretRefEnvVars.length > 0) {
       annotations['notebooks.opendatahub.io/notebook-restart'] = 'true';
     }
 
@@ -192,6 +196,7 @@ const SpawnerFooter: React.FC<SpawnerFooterProps> = ({
       volumes,
       volumeMounts,
       envFrom,
+      existingSecretRefEnvVars,
       connections,
       feastData,
     };
@@ -224,11 +229,10 @@ const SpawnerFooter: React.FC<SpawnerFooterProps> = ({
 
     await Promise.all(restartConnectedNotebooksPromises);
 
-    const envFrom = await createConfigMapsAndSecretsForNotebook(
-      projectName,
-      [...envVariables],
-      dryRun,
-    );
+    const [envFrom, existingSecretRefEnvVars] = await Promise.all([
+      createConfigMapsAndSecretsForNotebook(projectName, [...envVariables], dryRun),
+      resolveExistingSecretRefEnvVars(projectName, envVariables),
+    ]);
 
     const { volumes, volumeMounts } = pvcVolumeDetails;
     const feastData = generateFeastMetadata(selectedFeatureStores, undefined, false);
@@ -238,6 +242,7 @@ const SpawnerFooter: React.FC<SpawnerFooterProps> = ({
       volumes,
       volumeMounts,
       envFrom: [...envFrom],
+      existingSecretRefEnvVars,
       connections,
       feastData,
     };
